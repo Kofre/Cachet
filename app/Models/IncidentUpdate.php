@@ -56,7 +56,7 @@ class IncidentUpdate extends Model implements HasPresenter
      * @var string[]
      */
     public $rules = [
-        'incident_id' => 'int',
+        'incident_id' => 'required|int',
         'status'      => 'required|int',
         'message'     => 'required|string',
         'user_id'     => 'required|int',
@@ -81,6 +81,16 @@ class IncidentUpdate extends Model implements HasPresenter
     public function incident()
     {
         return $this->belongsTo(Incident::class);
+    }
+
+    /**
+     * Get the user relation.
+     *
+     * @return \Illuminate\Database\Eloquent\Relations\BelongsTo
+     */
+    public function user()
+    {
+        return $this->belongsTo(User::class);
     }
 
     /**

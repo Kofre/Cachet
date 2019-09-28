@@ -12,10 +12,10 @@
 namespace CachetHQ\Cachet\Http\Controllers\Dashboard;
 
 use AltThree\Validator\ValidationException;
+use CachetHQ\Cachet\Bus\Commands\Incident\CreateIncidentCommand;
 use CachetHQ\Cachet\Bus\Commands\Incident\RemoveIncidentCommand;
-use CachetHQ\Cachet\Bus\Commands\Incident\ReportIncidentCommand;
 use CachetHQ\Cachet\Bus\Commands\Incident\UpdateIncidentCommand;
-use CachetHQ\Cachet\Bus\Commands\IncidentUpdate\ReportIncidentUpdateCommand;
+use CachetHQ\Cachet\Integrations\Contracts\System;
 use CachetHQ\Cachet\Models\Component;
 use CachetHQ\Cachet\Models\ComponentGroup;
 use CachetHQ\Cachet\Models\Incident;
@@ -23,7 +23,6 @@ use CachetHQ\Cachet\Models\IncidentTemplate;
 use GrahamCampbell\Binput\Facades\Binput;
 use Illuminate\Contracts\Auth\Guard;
 use Illuminate\Routing\Controller;
-use Illuminate\Support\Facades\Redirect;
 use Illuminate\Support\Facades\View;
 
 /**
@@ -48,33 +47,25 @@ class IncidentController extends Controller
     protected $auth;
 
     /**
+     * The system instance.
+     *
+     * @var \CachetHQ\Cachet\Integrations\Contracts\System
+     */
+    protected $system;
+
+    /**
      * Creates a new incident controller instance.
      *
      * @param \Illuminate\Contracts\Auth\Guard $auth
      *
      * @return void
      */
-    public function __construct(Guard $auth)
+    public function __construct(Guard $auth, System $system)
     {
         $this->auth = $auth;
+        $this->system = $system;
 
-        $this->subMenu = [
-            'incidents' => [
-                'title'  => trans('dashboard.incidents.incidents'),
-                'url'    => route('dashboard.incidents.index'),
-                'icon'   => 'ion-android-checkmark-circle',
-                'active' => true,
-            ],
-            'schedule' => [
-                'title'  => trans('dashboard.schedule.schedule'),
-                'url'    => route('dashboard.schedule.index'),
-                'icon'   => 'ion-android-calendar',
-                'active' => false,
-            ],
-        ];
-
-        View::share('sub_menu', $this->subMenu);
-        View::share('sub_title', trans('dashboard.incidents.title'));
+        View::share('subTitle', trans('dashboard.incidents.title'));
     }
 
     /**
@@ -84,7 +75,7 @@ class IncidentController extends Controller
      */
     public function showIncidents()
     {
-        $incidents = Incident::notScheduled()->orderBy('created_at', 'desc')->get();
+        $incidents = Incident::with('user')->orderBy('created_at', 'desc')->get();
 
         return View::make('dashboard.incidents.index')
             ->withPageTitle(trans('dashboard.incidents.incidents').' - '.trans('dashboard.dashboard'))
@@ -101,7 +92,8 @@ class IncidentController extends Controller
         return View::make('dashboard.incidents.add')
             ->withPageTitle(trans('dashboard.incidents.add.title').' - '.trans('dashboard.dashboard'))
             ->withComponentsInGroups(ComponentGroup::with('components')->get())
-            ->withComponentsOutGroups(Component::where('group_id', 0)->get())
+            ->withComponentsOutGroups(Component::where('group_id', '=', 0)->get())
+            ->withNotificationsEnabled($this->system->canNotifySubscribers())
             ->withIncidentTemplates(IncidentTemplate::all());
     }
 
@@ -125,27 +117,28 @@ class IncidentController extends Controller
     public function createIncidentAction()
     {
         try {
-            $incident = dispatch(new ReportIncidentCommand(
+            $incident = execute(new CreateIncidentCommand(
                 Binput::get('name'),
                 Binput::get('status'),
-                Binput::get('message'),
+                Binput::get('message', null, false, false),
                 Binput::get('visible', true),
                 Binput::get('component_id'),
                 Binput::get('component_status'),
                 Binput::get('notify', false),
                 Binput::get('stickied', false),
-                Binput::get('created_at'),
+                Binput::get('occurred_at'),
                 null,
-                null
+                [],
+                ['seo' => Binput::get('seo', [])]
             ));
         } catch (ValidationException $e) {
-            return Redirect::route('dashboard.incidents.add')
+            return cachet_redirect('dashboard.incidents.create')
                 ->withInput(Binput::all())
                 ->withTitle(sprintf('%s %s', trans('dashboard.notifications.whoops'), trans('dashboard.incidents.add.failure')))
                 ->withErrors($e->getMessageBag());
         }
 
-        return Redirect::route('dashboard.incidents.index')
+        return cachet_redirect('dashboard.incidents')
             ->withSuccess(sprintf('%s %s', trans('dashboard.notifications.awesome'), trans('dashboard.incidents.add.success')));
     }
 
@@ -185,7 +178,7 @@ class IncidentController extends Controller
     {
         $template->delete();
 
-        return Redirect::route('dashboard.templates.index')
+        return cachet_redirect('dashboard.templates')
             ->withSuccess(sprintf('%s %s', trans('dashboard.notifications.awesome'), trans('dashboard.incidents.templates.delete.success')));
     }
 
@@ -197,15 +190,18 @@ class IncidentController extends Controller
     public function createIncidentTemplateAction()
     {
         try {
-            IncidentTemplate::create(Binput::get('template'));
+            IncidentTemplate::create([
+                'name'     => Binput::get('name'),
+                'template' => Binput::get('template', null, false, false),
+            ]);
         } catch (ValidationException $e) {
-            return Redirect::route('dashboard.templates.add')
+            return cachet_redirect('dashboard.templates.create')
                 ->withInput(Binput::all())
                 ->withTitle(sprintf('%s %s', trans('dashboard.notifications.whoops'), trans('dashboard.incidents.templates.add.failure')))
                 ->withErrors($e->getMessageBag());
         }
 
-        return Redirect::route('dashboard.templates.index')
+        return cachet_redirect('dashboard.templates')
             ->withSuccess(sprintf('%s %s', trans('dashboard.notifications.awesome'), trans('dashboard.incidents.templates.add.success')));
     }
 
@@ -218,9 +214,9 @@ class IncidentController extends Controller
      */
     public function deleteIncidentAction(Incident $incident)
     {
-        dispatch(new RemoveIncidentCommand($incident));
+        execute(new RemoveIncidentCommand($incident));
 
-        return Redirect::route('dashboard.incidents.index')
+        return cachet_redirect('dashboard.incidents')
             ->withSuccess(sprintf('%s %s', trans('dashboard.notifications.awesome'), trans('dashboard.incidents.delete.success')));
     }
 
@@ -237,7 +233,8 @@ class IncidentController extends Controller
             ->withPageTitle(trans('dashboard.incidents.edit.title').' - '.trans('dashboard.dashboard'))
             ->withIncident($incident)
             ->withComponentsInGroups(ComponentGroup::with('components')->get())
-            ->withComponentsOutGroups(Component::where('group_id', 0)->get());
+            ->withComponentsOutGroups(Component::where('group_id', '=', 0)->get())
+            ->withNotificationsEnabled($this->system->canNotifySubscribers());
     }
 
     /**
@@ -250,7 +247,7 @@ class IncidentController extends Controller
     public function editIncidentAction(Incident $incident)
     {
         try {
-            $incident = dispatch(new UpdateIncidentCommand(
+            $incident = execute(new UpdateIncidentCommand(
                 $incident,
                 Binput::get('name'),
                 Binput::get('status'),
@@ -260,12 +257,13 @@ class IncidentController extends Controller
                 Binput::get('component_status'),
                 Binput::get('notify', true),
                 Binput::get('stickied', false),
-                Binput::get('created_at'),
+                Binput::get('occurred_at'),
                 null,
-                null
+                [],
+                ['seo' => Binput::get('seo', [])]
             ));
         } catch (ValidationException $e) {
-            return Redirect::route('dashboard.incidents.edit', ['id' => $incident->id])
+            return cachet_redirect('dashboard.incidents.edit', ['id' => $incident->id])
                 ->withInput(Binput::all())
                 ->withTitle(sprintf('%s %s', trans('dashboard.notifications.whoops'), trans('dashboard.incidents.templates.edit.failure')))
                 ->withErrors($e->getMessageBag());
@@ -275,7 +273,7 @@ class IncidentController extends Controller
             $incident->component->update(['status' => Binput::get('component_status')]);
         }
 
-        return Redirect::route('dashboard.incidents.edit', ['id' => $incident->id])
+        return cachet_redirect('dashboard.incidents.edit', ['id' => $incident->id])
             ->withSuccess(sprintf('%s %s', trans('dashboard.notifications.awesome'), trans('dashboard.incidents.edit.success')));
     }
 
@@ -291,51 +289,12 @@ class IncidentController extends Controller
         try {
             $template->update(Binput::get('template'));
         } catch (ValidationException $e) {
-            return Redirect::route('dashboard.templates.edit', ['id' => $template->id])
+            return cachet_redirect('dashboard.templates.edit', ['id' => $template->id])
                 ->withUpdatedTemplate($template)
                 ->withTemplateErrors($e->getMessageBag()->getErrors());
         }
 
-        return Redirect::route('dashboard.templates.edit', ['id' => $template->id])
+        return cachet_redirect('dashboard.templates.edit', ['id' => $template->id])
             ->withUpdatedTemplate($template);
-    }
-
-    /**
-     * Shows the incident update form.
-     *
-     * @param \CachetHQ\Cachet\Models\Incident $incident
-     *
-     * @return \Illuminate\View\View
-     */
-    public function showIncidentUpdateAction(Incident $incident)
-    {
-        return View::make('dashboard.incidents.update')->withIncident($incident);
-    }
-
-    /**
-     * Creates a new incident update.
-     *
-     * @param \CachetHQ\Cachet\Models\Incident $incident
-     *
-     * @return \Illuminate\Http\RedirectResponse
-     */
-    public function createIncidentUpdateAction(Incident $incident)
-    {
-        try {
-            $incident = dispatch(new ReportIncidentUpdateCommand(
-                $incident,
-                Binput::get('status'),
-                Binput::get('message'),
-                $this->auth->user()
-            ));
-        } catch (ValidationException $e) {
-            return Redirect::route('dashboard.incidents.update', ['id' => $incident->id])
-                ->withInput(Binput::all())
-                ->withTitle(sprintf('%s %s', trans('dashboard.notifications.whoops'), trans('dashboard.incidents.templates.edit.failure')))
-                ->withErrors($e->getMessageBag());
-        }
-
-        return Redirect::route('dashboard.incidents.index')
-            ->withSuccess(sprintf('%s %s', trans('dashboard.notifications.awesome'), trans('dashboard.incidents.delete.success')));
     }
 }

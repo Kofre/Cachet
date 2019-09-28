@@ -18,7 +18,7 @@
                             <h3>{{ trans('dashboard.login.two-factor') }}</h3>
                         </div>
                         <br>
-                        <form method="POST" action="{{ route('auth.two-factor') }}" accept-charset="UTF-8">
+                        <form method="POST" action="{{ cachet_route('auth.two-factor', [], 'post') }}" accept-charset="UTF-8">
                             <input type="hidden" name="_token" value="{{ csrf_token() }}">
 
                             <fieldset>
@@ -28,7 +28,7 @@
 
                                 <div class="form-group">
                                     <label class="sr-only">{{ trans('forms.login.2fauth') }}</label>
-                                    <input type="text" name="code" class="form-control" placeholder="{{ trans('forms.login.2fauth') }}" required>
+                                    <input type="text" name="code" class="form-control" placeholder="{{ trans('forms.login.2fauth') }}" required autofocus>
                                 </div>
                                 <div class="form-group">
                                     <button type="submit" class="btn btn-info btn-lg btn-block btn-trans">{{ trans('dashboard.login.login') }}</button>
